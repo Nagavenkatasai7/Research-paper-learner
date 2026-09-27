@@ -100,17 +100,44 @@
   }
 
   /* ---------------- Read-aloud (Story Mode) ---------------- */
+  // Best-sounding voices first: neural/"Natural" voices, then Google's, then Apple's premium ones.
+  const VOICE_RANK = [/natural|neural/i, /online/i, /google/i, /premium|enhanced/i, /samantha|aria|jenny|ava|allison|zira|serena|karen|moira|susan/i];
+  const voiceScore = (v) => {
+    const i = VOICE_RANK.findIndex((re) => re.test(v.name));
+    return (i < 0 ? VOICE_RANK.length : i) * 2 + (/^en[-_]US/i.test(v.lang) ? 0 : 1);
+  };
+  const VOICE_KEY = "pq:voice";
+
   const speech = {
     supported: typeof window.speechSynthesis !== "undefined" && typeof window.SpeechSynthesisUtterance !== "undefined",
     muted: false,
     voice: null,
+    /** English voices this browser offers, best-sounding first. */
+    voices() {
+      if (!this.supported) return [];
+      const all = window.speechSynthesis.getVoices() || [];
+      const en = all.filter((v) => /^en[-_]/i.test(v.lang));
+      return (en.length ? en : all).slice().sort((a, b) => voiceScore(a) - voiceScore(b) || a.name.localeCompare(b.name));
+    },
     pickVoice() {
-      if (!this.supported) return null;
-      const voices = window.speechSynthesis.getVoices() || [];
-      const en = voices.filter((v) => /^en[-_]/i.test(v.lang));
-      const preferred = /samantha|aria|jenny|google us english|zira|serena|karen|moira|female/i;
-      this.voice = en.find((v) => preferred.test(v.name)) || en.find((v) => v.localService) || en[0] || voices[0] || null;
+      const list = this.voices();
+      let saved = null;
+      try {
+        saved = localStorage.getItem(VOICE_KEY);
+      } catch (e) {
+        saved = null;
+      }
+      this.voice = (saved && list.find((v) => v.name === saved)) || list[0] || null;
       return this.voice;
+    },
+    /** Remember the viewer's chosen voice on this device. */
+    setVoice(name) {
+      this.voice = this.voices().find((v) => v.name === name) || this.voice;
+      try {
+        localStorage.setItem(VOICE_KEY, name);
+      } catch (e) {
+        /* per-device convenience only */
+      }
     },
     /** Speak text; resolves when finished (or immediately when muted/unsupported). */
     speak(text, { onStart, onEnd, onWord } = {}) {
@@ -128,8 +155,8 @@
           const u = new SpeechSynthesisUtterance(text);
           const v = this.voice || this.pickVoice();
           if (v) u.voice = v;
-          u.rate = 0.98;
-          u.pitch = 1.25;
+          u.rate = 1;
+          u.pitch = 1.25; // Pip's cute-robot voice
           u.onstart = () => onStart && onStart();
           u.onboundary = () => onWord && onWord();
           u.onend = done;

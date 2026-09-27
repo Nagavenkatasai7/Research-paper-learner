@@ -168,6 +168,7 @@ Rules:
             <button class="btn small" type="button" data-act="back" ${i === 0 ? "disabled" : ""}>← Back</button>
             ${pip.speech.supported ? `<button class="btn small" type="button" data-act="replay">Replay voice</button><button class="btn small ghost" type="button" data-act="voice" aria-pressed="${voiceOn}">Voice: ${voiceOn ? "on" : "off"}</button>` : ""}
             <button class="btn small ghost" type="button" data-act="redraw">Redraw</button>
+            ${pip.speech.supported ? `<label class="voicepick"><span class="label">Pip's voice</span><select id="voice-pick" aria-label="Pip's voice"></select></label>` : ""}
             <button class="btn small primary" type="button" data-act="next" ${answered ? "" : "disabled"}>${last ? (ctx.paper.progress.story ? "Go to the Map →" : "Finish story") : "Next scene →"}</button>
           </div>
         </div>
@@ -221,6 +222,24 @@ Rules:
           if (!voiceOn) setVoice(true);
           narrate();
         });
+      const pickEl = view.querySelector("#voice-pick");
+      const fillVoices = () => {
+        if (!pickEl) return;
+        const list = pip.speech.voices();
+        const current = pip.speech.voice || pip.speech.pickVoice();
+        pickEl.innerHTML = list.map((v) => `<option value="${esc(v.name)}" ${current && v.name === current.name ? "selected" : ""}>${esc(v.name.replace(/^(Microsoft|Google|Apple)\s+/i, ""))}</option>`).join("");
+        pickEl.closest(".voicepick").hidden = list.length < 2;
+      };
+      if (pickEl) {
+        fillVoices();
+        // Some browsers load their voice list a moment after the page.
+        if (!pickEl.options.length) setTimeout(fillVoices, 800);
+        pickEl.addEventListener("change", () => {
+          pip.speech.setVoice(pickEl.value);
+          if (!voiceOn) setVoice(true);
+          narrate();
+        });
+      }
       view.querySelector('[data-act="redraw"]').addEventListener("click", () => {
         delete story.svgs[i];
         paint();
