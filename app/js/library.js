@@ -218,6 +218,68 @@
   }
   PQ.makeBrain = makeBrain;
 
+  /* ---------------- Pip's brain (outside claude.ai) ---------------- */
+  function brainCard() {
+    const cfg = PQ.openrouter.load();
+    const connected = !!(svc.provider && cfg && cfg.key);
+    const card = el(`<section class="brain card" aria-labelledby="brain-h">
+      <div><p class="eyebrow">Pip's brain</p><h2 id="brain-h">${connected ? "Thinking with a free OpenRouter model" : "Give Pip a free brain"}</h2></div>
+      <p class="muted">${
+        connected
+          ? `Pip is using <b>${esc(cfg.modelName || cfg.model)}</b>${cfg.visionModel ? "" : " (it can't see page images, so figures are explained from the page text)"}. Free models are slower than Claude and allow only a few requests a minute.`
+          : "Outside claude.ai, Pip can think with OpenRouter's free models. Paste your OpenRouter key: it stays in this browser and is only ever sent to openrouter.ai."
+      }</p>
+      <form class="brain-form">
+        ${connected ? "" : `<label class="label" for="or-key">OpenRouter key</label><input id="or-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-v1-…" required>`}
+        <label class="label" for="or-model">Free model</label>
+        <select id="or-model"><option value="">Best available (recommended)</option></select>
+        <div class="controls">
+          <button class="btn primary" type="submit">${connected ? "Switch model" : "Connect"}</button>
+          ${connected ? `<button class="btn ghost" type="button" data-act="forget">Disconnect and forget key</button>` : `<a class="linkish" href="https://openrouter.ai/keys" target="_blank" rel="noopener">Get a key</a>`}
+        </div>
+        <p class="status muted" role="status"></p>
+      </form>
+    </section>`);
+    const form = card.querySelector("form");
+    const select = card.querySelector("#or-model");
+    const status = card.querySelector(".status");
+    PQ.openrouter
+      .freeModels()
+      .then((models) => {
+        for (const m of models) {
+          const o = el(`<option value="${esc(m.id)}">${esc(m.name)}${m.vision ? " · sees images" : ""}</option>`);
+          if (connected && cfg.model === m.id) o.selected = true;
+          select.appendChild(o);
+        }
+      })
+      .catch((err) => (status.textContent = err.message));
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const key = connected ? cfg.key : card.querySelector("#or-key").value;
+      if (!key.trim()) return;
+      const btn = form.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      status.textContent = "Checking with OpenRouter…";
+      try {
+        const saved = await pip.thinking(PQ.openrouter.connect(key, select.value));
+        PQ.refreshBanner();
+        pip.cheer(`My brain is online: ${saved.modelName}!`);
+        PQ.go({ name: "library" });
+      } catch (err) {
+        status.textContent = err && err.code ? new PQ.AIError(err.code).message : (err && err.message) || String(err);
+        btn.disabled = false;
+      }
+    });
+    const forget = card.querySelector('[data-act="forget"]');
+    if (forget)
+      forget.addEventListener("click", () => {
+        PQ.openrouter.deactivate();
+        PQ.refreshBanner();
+        PQ.go({ name: "library" });
+      });
+    return card;
+  }
+
   /* ---------------- Library view ---------------- */
   function hundredGrid(papers) {
     const byDay = new Map(papers.map((p) => [p.day, p]));
@@ -280,6 +342,8 @@
     </div>`);
 
     const grid = view.querySelector(".lib-grid");
+    // Outside claude.ai, connecting a brain is step one, so the card leads until it's done.
+    if (!svc.inViewer) (svc.sample ? grid.after.bind(grid) : grid.before.bind(grid))(brainCard());
     const drop = el(`<label class="drop" for="pdf-input">
       <span class="day-tag">Day ${nextDay}</span>
       <h3>Start a new quest</h3>
@@ -306,7 +370,8 @@
     papers.forEach((p) => grid.appendChild(paperCard(p)));
 
     PQ.clear(mount).appendChild(view);
-    if (!papers.length) pip.say("Hi, I'm Pip! Drop in your first paper and I'll turn it into a quest.", { ms: 9000 });
+    if (!svc.sample) pip.say("Hi, I'm Pip! Give me a brain first, then drop in your first paper.", { ms: 9000 });
+    else if (!papers.length) pip.say("Hi, I'm Pip! Drop in your first paper and I'll turn it into a quest.", { ms: 9000 });
   }
 
   PQ.library = { render, ingest, doneCount };

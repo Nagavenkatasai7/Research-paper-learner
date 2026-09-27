@@ -128,7 +128,7 @@
       const gate = el(`<div class="gate card">
         <div class="bot">${pip.svg(svc.sample ? "idle" : "confused")}</div>
         <h2>Pip hasn't read this paper yet</h2>
-        <p class="muted">${svc.sample ? "Pip needs a minute or two to read it and write study notes. Every stage of the quest is built from them." : "Pip can only think when this page is open in Claude. Open it from claude.ai while signed in, then come back to this paper."}</p>
+        <p class="muted">${svc.sample ? "Pip needs a minute or two to read it and write study notes. Every stage of the quest is built from them." : "Pip has no brain connected here. Open Paper Quest from claude.ai, or go back to the library and connect a free OpenRouter model under Pip's brain."}</p>
       </div>`);
       if (svc.sample) {
         const b = el(`<button class="btn primary" type="button">Let Pip read it</button>`);

@@ -108,6 +108,14 @@
     combine: () => ({ title: "Music plus translation", body: "Translate melodies between styles.", spark: "Try two short songs." }),
   };
 
+  /** Canned reply for a task, as text (used by the fake OpenRouter server in smoke-openrouter.mjs). */
+  window.__mockAnswer = (task) => {
+    const fn = answers[task];
+    if (!fn) return "OK";
+    const out = fn();
+    return typeof out === "string" ? out : JSON.stringify(out);
+  };
+
   const calls = [];
   window.__mockCalls = calls;
 

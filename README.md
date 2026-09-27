@@ -99,6 +99,20 @@ Vercel at that build. Outside claude.ai there is no `window.claude` runtime, so 
 full interface and stores your library in the browser, but **Pip can't think there**: stops that
 need Claude show a note instead. Use the claude.ai artifact for real study sessions.
 
+### Free models through OpenRouter (Vercel site only)
+
+On any copy hosted outside claude.ai, the library shows a **Pip's brain** panel. Paste your own
+OpenRouter key and pick a free model (only `:free`/zero-price models are listed), and Pip thinks
+through OpenRouter. The key is kept in that browser's localStorage and sent only to openrouter.ai.
+It is never part of the code or the deployment. `app/js/openrouter.js` gives OpenRouter the same
+call shape as claude.ai's `sample`, so every stage works unchanged. It streams replies, strips
+`<think>` blocks, reads JSON from code fences, and falls back to another free model when one is
+busy. Page images go to a free model that accepts images, when one exists. The claude.ai artifact
+can't use OpenRouter, because artifacts can't call outside services.
+
+`dev/smoke-openrouter.mjs` tests this path against a fake OpenRouter. Run `smoke.mjs` first; it
+creates the test PDF.
+
 ## Publishing updates
 
 The artifact is published from `app/paper-quest.html`, with `app/js/*.js` as supporting files at

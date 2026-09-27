@@ -31,22 +31,30 @@
 
   function banner() {
     let text = "";
-    if (!svc.inViewer) text = "Pip's brain is offline here. Open Paper Quest from claude.ai to let Pip think. Your saved papers still open.";
+    if (!svc.inViewer && svc.provider) text = `Pip is thinking with ${svc.provider.model} (free, via OpenRouter). Your library is saved in this browser only.`;
+    else if (!svc.inViewer) text = "Pip's brain is offline here. Connect a free OpenRouter model under “Pip's brain” below, or open Paper Quest from claude.ai.";
     else if (!svc.sample) text = "This page can't reach Claude right now, so Pip can't think. Reload the page, and choose Allow if Claude asks.";
     else if (!store.synced) text = "Your library is saved in this browser only, so it won't follow you to another device.";
     if (!text) return null;
     return el(`<div class="banner" role="note"><div class="wrap"><span>${esc(text)}</span></div></div>`);
   }
 
+  /** Redraw the top banner (the brain can be connected or disconnected at runtime). */
+  PQ.refreshBanner = function refreshBanner() {
+    const old = app.querySelector(".banner");
+    const b = banner();
+    if (old) old.remove();
+    if (b) app.insertBefore(b, app.firstChild);
+  };
+
   async function boot() {
     pip.mountDock();
     await PQ.connect();
     store.choose();
     PQ.clear(app);
-    const b = banner();
-    if (b) app.appendChild(b);
     view = el(`<div id="view" style="flex:1;display:flex;flex-direction:column"></div>`);
     app.appendChild(view);
+    PQ.refreshBanner();
     await PQ.go({ name: "library" });
   }
 

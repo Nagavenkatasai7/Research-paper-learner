@@ -151,7 +151,12 @@ window.PQ = window.PQ || {};
   };
 
   async function connect() {
-    if (!svc.inViewer) return;
+    if (!svc.inViewer) {
+      // Outside claude.ai, Pip can think through the viewer's own OpenRouter key, if they saved one.
+      const cfg = PQ.openrouter && PQ.openrouter.load();
+      if (cfg && cfg.key) PQ.openrouter.activate(cfg);
+      return;
+    }
     const use = (name) =>
       Promise.resolve()
         .then(() => window.claude.use(name))
@@ -384,10 +389,13 @@ window.PQ = window.PQ || {};
   ].join(" ");
 
   const FRIENDLY = {
-    no_sample: "Pip can only think when this page is open in Claude. Open it from claude.ai while signed in.",
+    no_sample: "Pip has no brain connected here. Open Paper Quest from claude.ai, or add a free OpenRouter key in the library.",
+    bad_key: "OpenRouter didn't accept that key. Check it on openrouter.ai/keys and connect again.",
+    no_credit: "OpenRouter says this account needs credit for that request. Pick another free model in Pip's brain.",
+    model_unavailable: "That free model isn't available right now. Pick another one in Pip's brain.",
     not_granted: "This page isn't allowed to use Claude yet. Reload the page and choose Allow when Claude asks.",
     sampling_disabled: "Claude isn't available for this account, so Pip can't think here.",
-    rate_limited: "Pip needs a breather: you've hit a usage limit or sent too many requests at once. Wait a little, then try again.",
+    rate_limited: "Pip needs a breather: you've hit a usage limit or sent too many requests at once. Free models allow only a few requests a minute. Wait a little, then try again.",
     session_expired: "Your Claude session expired. Sign in again, then reload this page.",
     prompt_too_large: "That was too much text for one go. Try a smaller piece.",
     refused: "Claude declined that request. Try asking in a different way.",
