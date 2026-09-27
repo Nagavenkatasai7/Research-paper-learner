@@ -390,7 +390,8 @@ window.PQ = window.PQ || {};
 
   const FRIENDLY = {
     no_sample: "Pip has no brain connected here. Open Paper Quest from claude.ai, or add a free OpenRouter key in the library.",
-    bad_key: "OpenRouter didn't accept that key. Check it on openrouter.ai/keys and connect again.",
+    bad_key: "OpenRouter didn't accept that key. If you deleted or disabled it, create a new one at openrouter.ai/keys and paste that.",
+    forbidden: "OpenRouter refused this request for this model. Try another free model in Pip's brain.",
     no_credit: "OpenRouter says this account needs credit for that request. Pick another free model in Pip's brain.",
     model_unavailable: "That free model isn't available right now. Pick another one in Pip's brain.",
     not_granted: "This page isn't allowed to use Claude yet. Reload the page and choose Allow when Claude asks.",
@@ -406,8 +407,9 @@ window.PQ = window.PQ || {};
   };
 
   class AIError extends Error {
-    constructor(code, text) {
-      super(FRIENDLY[code] || "Pip couldn't reach Claude just now. Try again in a moment.");
+    constructor(code, text, detail) {
+      const base = FRIENDLY[code] || "Pip couldn't reach its brain just now. Try again in a moment.";
+      super(detail ? `${base} (OpenRouter said: “${detail}”)` : base);
       this.code = code;
       this.partial = text;
     }
@@ -457,7 +459,7 @@ window.PQ = window.PQ || {};
       const r = await svc.sample(prompt, opts);
       return r.text;
     } catch (e) {
-      throw new AIError((e && e.code) || "upstream_error", e && e.text);
+      throw new AIError((e && e.code) || "upstream_error", e && e.text, e && e.detail);
     }
   }
 

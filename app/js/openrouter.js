@@ -72,7 +72,38 @@
   const stripThink = (s) => s.replace(/<think>[\s\S]*?(<\/think>|$)/g, "").replace(/^\s+/, "");
 
   function fail(code, message, extra) {
-    return Object.assign({ code, message: message || code }, extra || {});
+    return Object.assign({ code, message: message || code, detail: message || "" }, extra || {});
+  }
+
+  /** Tidy a pasted key: drop spaces, line breaks, quotes and a leading "Bearer". */
+  function cleanKey(raw) {
+    return String(raw || "")
+      .replace(/\s+/g, "")
+      .replace(/^["'`]+|["'`]+$/g, "")
+      .replace(/^Bearer/i, "");
+  }
+
+  /** Ask OpenRouter about the key itself, separately from any model. */
+  async function checkKey(key) {
+    for (const endpoint of ["/key", "/auth/key"]) {
+      let r;
+      try {
+        r = await fetch(`${API}${endpoint}`, { headers: { Authorization: `Bearer ${key}` } });
+      } catch (e) {
+        throw fail("upstream_error", "Couldn't reach openrouter.ai from this browser. Check your connection, or an ad or privacy blocker.");
+      }
+      if (r.status === 404) continue;
+      let body = null;
+      try {
+        body = await r.json();
+      } catch (e) {
+        body = null;
+      }
+      if (r.ok) return (body && body.data) || {};
+      const msg = (body && body.error && body.error.message) || `HTTP ${r.status}`;
+      throw fail(r.status === 401 || r.status === 403 ? "bad_key" : "upstream_error", msg);
+    }
+    return {};
   }
 
   async function streamOnce(cfg, model, content, opts) {
@@ -101,7 +132,7 @@
         msg = "";
       }
       const code =
-        r.status === 401 || r.status === 403 ? "bad_key" : r.status === 402 ? "no_credit" : r.status === 429 ? "rate_limited" : r.status === 404 ? "model_unavailable" : r.status === 400 && /context|too long|maximum|tokens/i.test(msg) ? "prompt_too_large" : "upstream_error";
+        r.status === 401 ? "bad_key" : r.status === 403 ? "forbidden" : r.status === 402 ? "no_credit" : r.status === 429 ? "rate_limited" : r.status === 404 ? "model_unavailable" : r.status === 400 && /context|too long|maximum|tokens/i.test(msg) ? "prompt_too_large" : "upstream_error";
       throw fail(code, msg);
     }
 
@@ -223,13 +254,16 @@
     save(null);
   }
 
-  /** Validate a key with one tiny call, then save and activate it. */
-  async function connect(key, chosenModelId) {
+  /** Check the key, then save and activate it with the chosen free model. */
+  async function connect(rawKey, chosenModelId) {
+    const key = cleanKey(rawKey);
+    if (!/^sk-or-/.test(key)) throw fail("bad_key", "An OpenRouter key starts with “sk-or-”. Copy the whole key from openrouter.ai/keys.");
+    await checkKey(key);
     const models = await freeModels();
     if (!models.length) throw new Error("OpenRouter isn't offering any free models right now. Try again later.");
     const { main, vision, fallbacks } = plan(models, chosenModelId);
     const cfg = {
-      key: key.trim(),
+      key,
       model: main.id,
       modelName: main.name,
       visionModel: vision ? vision.id : null,
@@ -237,11 +271,10 @@
       // Leave room for the reply: roughly 3 bytes of prompt text per token, capped at the app's usual size.
       maxBytes: Math.max(12000, Math.min(65536, Math.floor(main.context * 0.6 * 3))),
     };
-    await makeSample(cfg)("Reply with the single word OK.", {});
     save(cfg);
     activate(cfg);
     return cfg;
   }
 
-  PQ.openrouter = { load, save, freeModels, connect, activate, deactivate };
+  PQ.openrouter = { load, save, freeModels, connect, activate, deactivate, cleanKey };
 })(window.PQ);

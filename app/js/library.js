@@ -266,7 +266,7 @@
         pip.cheer(`My brain is online: ${saved.modelName}!`);
         PQ.go({ name: "library" });
       } catch (err) {
-        status.textContent = err && err.code ? new PQ.AIError(err.code).message : (err && err.message) || String(err);
+        status.textContent = err && err.code ? new PQ.AIError(err.code, null, err.detail).message : (err && err.message) || String(err);
         btn.disabled = false;
       }
     });

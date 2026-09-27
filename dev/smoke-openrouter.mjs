@@ -62,6 +62,10 @@ await page.route("**/*", async (route) => {
     const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*" };
     if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
     if (url.pathname === "/api/v1/models") return route.fulfill({ json: MODELS, headers: cors });
+    if (url.pathname === "/api/v1/key") {
+      const ok = (req.headers()["authorization"] || "") === "Bearer sk-or-v1-test-good";
+      return ok ? route.fulfill({ json: { data: { label: "test", is_free_tier: true } }, headers: cors }) : route.fulfill({ status: 401, json: { error: { message: "User not found.", code: 401 } }, headers: cors });
+    }
     if (url.pathname === "/api/v1/chat/completions") {
       const body = JSON.parse(req.postData());
       const auth = req.headers()["authorization"] || "";
@@ -97,13 +101,18 @@ try {
     if (opts.some((o) => /GPT-4o/.test(o))) throw new Error("paid model offered");
     await shot("or-01-brain-card");
   });
-  await step("a wrong key is refused with a clear message", async () => {
+  await step("a non-OpenRouter key is caught before any request", async () => {
+    await page.fill("#or-key", "sk-ant-something");
+    await page.getByRole("button", { name: "Connect" }).click();
+    await page.getByText(/starts with “sk-or-”/).waitFor();
+  });
+  await step("a wrong key is refused, showing OpenRouter's own reason", async () => {
     await page.fill("#or-key", "sk-or-v1-wrong");
     await page.getByRole("button", { name: "Connect" }).click();
-    await page.getByText("OpenRouter didn't accept that key").waitFor();
+    await page.getByText(/didn't accept that key.*OpenRouter said: “User not found\.”/).waitFor();
   });
   await step("a good key connects and the banner names the model", async () => {
-    await page.fill("#or-key", "sk-or-v1-test-good");
+    await page.fill("#or-key", '  "Bearer sk-or-v1-test-good\n" ');
     await page.getByRole("button", { name: "Connect" }).click();
     await page.getByText(/Pip is thinking with .* \(free, via OpenRouter\)/).waitFor();
     const saved = await page.evaluate(() => localStorage.getItem("pq:openrouter"));
