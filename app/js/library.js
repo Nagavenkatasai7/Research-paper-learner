@@ -261,9 +261,10 @@
       btn.disabled = true;
       status.textContent = "Checking with OpenRouter…";
       try {
-        const saved = await pip.thinking(PQ.openrouter.connect(key, select.value));
+        const saved = await pip.thinking(PQ.openrouter.connect(key, select.value, (t) => (status.textContent = t)));
         PQ.refreshBanner();
         pip.cheer(`My brain is online: ${saved.modelName}!`);
+        if (saved.note) PQ.toast(saved.note);
         PQ.go({ name: "library" });
       } catch (err) {
         status.textContent = err && err.code ? new PQ.AIError(err.code, null, err.detail).message : (err && err.message) || String(err);

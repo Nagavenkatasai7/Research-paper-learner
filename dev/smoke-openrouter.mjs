@@ -34,7 +34,12 @@ page.on("console", (m) => m.type() === "error" && errors.push(`console: ${m.text
 
 const MODELS = {
   data: [
-    { id: "meta-llama/llama-3.3-70b-instruct:free", name: "Llama 3.3 70B (free)", context_length: 131072, architecture: { input_modalities: ["text"] }, pricing: { prompt: "0", completion: "0" } },
+    { id: "thinkingmachines/inkling-small:free", name: "Inkling Small (free)", context_length: 1000000, architecture: { input_modalities: ["text"] }, pricing: { prompt: "0", completion: "0" } },
+    { id: "nvidia/nemotron-3-ultra:free", name: "Nemotron 3 Ultra (free)", context_length: 1000000, architecture: { input_modalities: ["text"] }, supported_parameters: ["response_format"], pricing: { prompt: "0", completion: "0" } },
+    { id: "nvidia/nemotron-nano-12b-v2-vl:free", name: "Nemotron Nano 12B VL (free)", context_length: 128000, architecture: { input_modalities: ["text", "image"] }, pricing: { prompt: "0", completion: "0" } },
+    { id: "meta-llama/llama-3.2-3b-instruct:free", name: "Llama 3.2 3B (free)", context_length: 131072, architecture: { input_modalities: ["text"] }, pricing: { prompt: "0", completion: "0" } },
+    { id: "qwen/qwen3-agentic:free", name: "Qwen3 Agentic (free)", context_length: 200000, architecture: { input_modalities: ["text"] }, pricing: { prompt: "0", completion: "0" } },
+    { id: "meta-llama/llama-3.3-70b-instruct:free", name: "Llama 3.3 70B (free)", context_length: 131072, architecture: { input_modalities: ["text"] }, supported_parameters: ["response_format", "max_tokens"], top_provider: { max_completion_tokens: 4096 }, pricing: { prompt: "0", completion: "0" } },
     { id: "google/gemma-3-27b-it:free", name: "Gemma 3 27B (free)", context_length: 96000, architecture: { input_modalities: ["text", "image"] }, pricing: { prompt: "0", completion: "0" } },
     { id: "openai/gpt-4o", name: "GPT-4o (paid)", context_length: 128000, architecture: { input_modalities: ["text", "image"] }, pricing: { prompt: "0.0000025", completion: "0.00001" } },
   ],
@@ -72,8 +77,15 @@ await page.route("**/*", async (route) => {
       const content = body.messages[0].content;
       const text = typeof content === "string" ? content : content.find((c) => c.type === "text").text;
       const task = (text.match(/^TASK: (\w+)/) || [])[1] || "ping";
-      requests.push({ task, model: body.model, image: Array.isArray(content) && content.some((c) => c.type === "image_url") });
+      requests.push({ task, model: body.model, image: Array.isArray(content) && content.some((c) => c.type === "image_url"), json: !!body.response_format, maxTokens: body.max_tokens });
       if (auth !== "Bearer sk-or-v1-test-good") return route.fulfill({ status: 401, json: { error: { message: "No auth credentials found", code: 401 } }, headers: cors });
+      if (body.model === "qwen/qwen3-agentic:free" || body.model.includes("inkling") || (body.model === "nvidia/nemotron-3-ultra:free" && task === "ping")) {
+        return route.fulfill({ status: 403, json: { error: { message: `${body.model} is only available on agentic harnesses.`, code: 403 } }, headers: cors });
+      }
+      if (task === "section_guide" && body.model.startsWith("meta-llama")) {
+        // The working model starts refusing mid-quest: Pip should switch for good.
+        return route.fulfill({ status: 403, json: { error: { message: "only available on agentic harnesses", code: 403 } }, headers: cors });
+      }
       if (task === "story_script" && rateLimitOnce) {
         rateLimitOnce = false; // first model is busy: the adapter should fall back to the next free model
         return route.fulfill({ status: 429, json: { error: { message: "Rate limit exceeded: free-models-per-min" } }, headers: cors });
@@ -99,6 +111,8 @@ try {
     await page.locator("#or-model option", { hasText: "Gemma 3 27B" }).waitFor({ state: "attached" });
     const opts = await page.locator("#or-model option").allTextContents();
     if (opts.some((o) => /GPT-4o/.test(o))) throw new Error("paid model offered");
+    if (opts.some((o) => /Inkling/.test(o))) throw new Error("agent-only model offered");
+    if (!/Nemotron 3 Ultra/.test(opts[1]) || !/Llama 3\.2 3B/.test(opts[opts.length - 1])) throw new Error(`ranking looks wrong: ${opts.join(" | ")}`);
     await shot("or-01-brain-card");
   });
   await step("a non-OpenRouter key is caught before any request", async () => {
@@ -114,7 +128,7 @@ try {
   await step("a good key connects and the banner names the model", async () => {
     await page.fill("#or-key", '  "Bearer sk-or-v1-test-good\n" ');
     await page.getByRole("button", { name: "Connect" }).click();
-    await page.getByText(/Pip is thinking with .* \(free, via OpenRouter\)/).waitFor();
+    await page.getByText(/Pip is thinking with Llama 3\.3 70B \(free\) \(free, via OpenRouter\)/).waitFor();
     const saved = await page.evaluate(() => localStorage.getItem("pq:openrouter"));
     if (!saved || !saved.includes("sk-or-v1-test-good")) throw new Error("key not kept in this browser");
   });
@@ -140,8 +154,20 @@ try {
     await page.getByRole("button", { name: "Skip ahead anyway" }).click();
     await page.locator(".pagebox .ptools button").first().click();
     await page.getByText("Figure 1: boxes are layers.").waitFor();
+    await page.getByText(/Pip is thinking with Gemma 3 27B/).waitFor(); // switched after Llama refused the section guide
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("pq:openrouter")));
+    if (saved.model !== "google/gemma-3-27b-it:free" || !saved.bad.includes("meta-llama/llama-3.3-70b-instruct:free")) throw new Error(`switch not remembered: ${JSON.stringify(saved)}`);
     const ex = requests.find((r) => r.task === "explain_page");
-    if (!ex || !ex.image || ex.model !== "google/gemma-3-27b-it:free") throw new Error(`explain_page request: ${JSON.stringify(ex)}`);
+    if (!ex || !ex.image || ex.model !== "nvidia/nemotron-nano-12b-v2-vl:free") throw new Error(`explain_page request: ${JSON.stringify(ex)}`);
+    const brain = requests.find((r) => r.task === "brain");
+    if (!brain.json || brain.maxTokens !== 4096) throw new Error(`brain request settings: ${JSON.stringify(brain)}`);
+  });
+  await step("an old saved setup pointing at an agent-only model is re-picked automatically", async () => {
+    await page.evaluate(() => localStorage.setItem("pq:openrouter", JSON.stringify({ key: "sk-or-v1-test-good", model: "thinkingmachines/inkling-small:free", modelName: "Inkling Small (free)", fallbacks: [] })));
+    await page.goto("https://pq.test/");
+    await page.getByText(/Pip's brain is now Llama 3\.3 70B/).waitFor({ timeout: 15000 });
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("pq:openrouter")));
+    if (saved.v !== 2 || saved.model !== "meta-llama/llama-3.3-70b-instruct:free") throw new Error(`upgrade: ${JSON.stringify(saved)}`);
   });
   console.log(`  requests: ${requests.map((r) => `${r.task}@${r.model.split("/")[1]}`).join(", ")}`);
 } catch (e) {

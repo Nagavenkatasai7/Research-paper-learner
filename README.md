@@ -105,9 +105,21 @@ On any copy hosted outside claude.ai, the library shows a **Pip's brain** panel.
 OpenRouter key and pick a free model (only `:free`/zero-price models are listed), and Pip thinks
 through OpenRouter. The key is kept in that browser's localStorage and sent only to openrouter.ai.
 It is never part of the code or the deployment. `app/js/openrouter.js` gives OpenRouter the same
-call shape as claude.ai's `sample`, so every stage works unchanged. It streams replies, strips
-`<think>` blocks, reads JSON from code fences, and falls back to another free model when one is
-busy. Page images go to a free model that accepts images, when one exists. The claude.ai artifact
+call shape as claude.ai's `sample`, so every stage works unchanged.
+
+How the model is chosen:
+* Free models are ranked by strength for teaching (Nemotron 3 Ultra, Qwen3, Llama, gpt-oss, …).
+  Tiny, coding-only and anonymous "alpha" models go last, and agent-only models such as Inkling are
+  excluded.
+* On connect, Pip sends each candidate a one-word test and keeps the first that answers.
+* Page images go to the best free vision model (for example Nemotron Nano VL), or to OpenRouter's
+  free router (`openrouter/free`), which picks an image-capable free model itself.
+* If a model later refuses or disappears, Pip switches to the next one and remembers it. The free
+  router is the last fallback.
+
+Per-request settings: streaming, JSON mode (`response_format`) for models that support it,
+temperature 0.3 for structured answers, and `max_tokens` up to 8192, capped by each model's limit.
+Replies have `<think>` blocks stripped and JSON read from code fences. The claude.ai artifact
 can't use OpenRouter, because artifacts can't call outside services.
 
 `dev/smoke-openrouter.mjs` tests this path against a fake OpenRouter. Run `smoke.mjs` first; it

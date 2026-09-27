@@ -154,7 +154,10 @@ window.PQ = window.PQ || {};
     if (!svc.inViewer) {
       // Outside claude.ai, Pip can think through the viewer's own OpenRouter key, if they saved one.
       const cfg = PQ.openrouter && PQ.openrouter.load();
-      if (cfg && cfg.key) PQ.openrouter.activate(cfg);
+      if (cfg && cfg.key) {
+        PQ.openrouter.activate(cfg);
+        PQ.openrouter.upgradeIfNeeded(cfg);
+      }
       return;
     }
     const use = (name) =>

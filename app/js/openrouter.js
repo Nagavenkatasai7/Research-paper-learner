@@ -6,12 +6,20 @@
 (function (PQ) {
   const API = "https://openrouter.ai/api/v1";
   const STORE_KEY = "pq:openrouter";
-  // Free models that tend to follow long instructions and return clean JSON, best first.
-  const PREFER = [/deepseek.*(v3|chat)/i, /qwen3|qwen-?2\.5-72b/i, /llama-4|llama-3\.3-70b/i, /gemini/i, /gpt-oss/i, /mistral|mixtral/i];
+  const CFG_VERSION = 2;
+  const ROUTER = "openrouter/free"; // OpenRouter's free router: picks any free model that supports the request (images, JSON)
+  // Strong general free models first (as of Sep 2026); the list changes often, so unknown names still work.
+  const PREFER = [/nemotron-?3-?ultra|nemotron.*ultra/i, /qwen3(?!.*coder)/i, /llama-4|llama-3\.3-70b/i, /gpt-oss-120b/i, /deepseek/i, /gemma-3-27b|gemma/i, /mistral|mixtral/i, /gpt-oss/i];
+  // Weaker for teaching (tiny, coding-only, or anonymous "alpha" test models): keep them last.
+  const DEMOTE = /coder|alpha|nano(?!.*vl)|mini|small|lfm|liquid|(^|[^0-9.])[1-8]b\b/i;
+  // Free models that only serve approved agent apps, never a web page like this one.
+  const EXCLUDE = /inkling/i;
   const rank = (m) => {
+    if (DEMOTE.test(m.id)) return PREFER.length + 1;
     const i = PREFER.findIndex((re) => re.test(m.id));
     return i < 0 ? PREFER.length : i;
   };
+  const visionRank = (m) => (/nemotron.*vl|vl\b|vision/i.test(m.id) ? 0 : /gemma|llama-4|qwen/i.test(m.id) ? 1 : 2);
 
   function load() {
     try {
@@ -37,28 +45,24 @@
     if (!r.ok) throw new Error("Couldn't load OpenRouter's model list. Check your connection and try again.");
     const j = await r.json();
     modelsCache = PQ.arr(j && j.data)
+      .filter((m) => m.id !== ROUTER && !EXCLUDE.test(m.id))
       .filter((m) => /:free$/.test(m.id) || (m.pricing && Number(m.pricing.prompt) === 0 && Number(m.pricing.completion) === 0))
       .map((m) => {
         const arch = m.architecture || {};
         const inputs = PQ.arr(arch.input_modalities);
+        const params = PQ.arr(m.supported_parameters);
         return {
           id: m.id,
           name: m.name || m.id,
           context: Number(m.context_length) || 0,
           vision: inputs.includes("image") || /image/.test(arch.modality || ""),
+          json: params.includes("response_format") || params.includes("structured_outputs"),
+          maxOut: Number(m.top_provider && m.top_provider.max_completion_tokens) || 0,
         };
       })
       .filter((m) => m.context >= 16000)
       .sort((a, b) => rank(a) - rank(b) || b.context - a.context);
     return modelsCache;
-  }
-
-  /** Pick the main model, a vision model for page images, and fallbacks for busy free models. */
-  function plan(models, chosenId) {
-    const main = models.find((m) => m.id === chosenId) || models[0];
-    const vision = main && main.vision ? main : models.find((m) => m.vision);
-    const fallbacks = models.filter((m) => m !== main).slice(0, 2);
-    return { main, vision, fallbacks };
   }
 
   const blobToDataUrl = (b) =>
@@ -106,6 +110,18 @@
     return {};
   }
 
+  /** Request settings per model: room for long study notes, JSON mode where supported, steady answers. */
+  function requestBody(cfg, model, content, opts) {
+    const caps = (cfg.caps && cfg.caps[model]) || {};
+    const body = { model, stream: true, messages: [{ role: "user", content }] };
+    body.max_tokens = Math.min(8192, caps.maxOut || 8192);
+    if (opts.json) {
+      body.temperature = 0.3;
+      if (caps.json || model === ROUTER) body.response_format = { type: "json_object" };
+    } else body.temperature = 0.7;
+    return body;
+  }
+
   async function streamOnce(cfg, model, content, opts) {
     let r;
     try {
@@ -118,7 +134,7 @@
           "HTTP-Referer": location.origin,
           "X-Title": "Paper Quest",
         },
-        body: JSON.stringify({ model, stream: true, messages: [{ role: "user", content }] }),
+        body: JSON.stringify(requestBody(cfg, model, content, opts)),
       });
     } catch (e) {
       if (e && e.name === "AbortError") throw fail("cancelled");
@@ -205,6 +221,26 @@
     throw fail("invalid_json", "", { text });
   }
 
+  // Codes that mean "this model won't serve this app": skip it for good rather than retry it.
+  const REFUSED = ["forbidden", "model_unavailable", "no_credit"];
+
+  /** A model refused to serve us: stop using it and keep the one that answered. */
+  function promote(cfg, refused, working, forVision) {
+    if (refused === ROUTER) return;
+    cfg.bad = [...new Set([...PQ.arr(cfg.bad), refused])];
+    cfg.fallbacks = PQ.arr(cfg.fallbacks).filter((m) => m !== refused && m !== working);
+    if (forVision) cfg.visionModel = working === ROUTER ? ROUTER : null; // the router picks an image-capable model itself
+    else {
+      cfg.model = working;
+      cfg.modelName = (cfg.names && cfg.names[working]) || working;
+    }
+    save(cfg);
+    activate(cfg);
+    if (PQ.refreshBanner) PQ.refreshBanner();
+    const was = (cfg.names && cfg.names[refused]) || refused;
+    PQ.toast(forVision ? `${was} isn't available to apps like this one, so Pip will explain pages from their text.` : `${was} isn't available to apps like this one, so Pip switched to ${cfg.modelName}.`);
+  }
+
   /** A `sample`-compatible function backed by OpenRouter. */
   function makeSample(cfg) {
     async function sample(input, opts = {}) {
@@ -213,23 +249,28 @@
       const useVision = imgs.length && cfg.visionModel;
       let content = text;
       if (useVision) content = [{ type: "text", text }, ...(await Promise.all(imgs.map(async (b) => ({ type: "image_url", image_url: { url: await blobToDataUrl(b) } }))))];
-      const order = [useVision ? cfg.visionModel : cfg.model, ...PQ.arr(cfg.fallbacks)].filter((m, i, all) => m && all.indexOf(m) === i);
+      const first = useVision ? cfg.visionModel : cfg.model;
+      const order = (useVision ? [first, ROUTER, cfg.model, ...PQ.arr(cfg.fallbacks)] : [first, ...PQ.arr(cfg.fallbacks), ROUTER]).filter(
+        (m, i, all) => m && all.indexOf(m) === i && !PQ.arr(cfg.bad).includes(m)
+      );
       let lastErr;
       for (const model of order) {
-        // Fallback models may not read images; they get the text only.
-        const body = model === (useVision ? cfg.visionModel : cfg.model) ? content : text;
+        // Only the vision model and the free router get the page image; other fallbacks get the text.
+        const body = useVision && (model === first || model === ROUTER) ? content : text;
         try {
-          return await streamOnce(cfg, model, body, opts);
+          const result = await streamOnce(cfg, model, body, opts);
+          if (lastErr && REFUSED.includes(lastErr.code)) promote(cfg, order[0], model, useVision);
+          return result;
         } catch (e) {
           lastErr = e;
-          const retryable = ["rate_limited", "upstream_error", "model_unavailable", "empty_completion"].includes(e.code) && !e.started;
+          const retryable = [...REFUSED, "rate_limited", "upstream_error", "empty_completion"].includes(e.code) && !e.started;
           if (!retryable) throw e;
         }
       }
       throw lastErr;
     }
     sample.json = async (input, opts) => {
-      const r = await sample(input, opts);
+      const r = await sample(input, { ...(opts || {}), json: true });
       if (r.truncated) throw fail("invalid_json", "", { text: r.text });
       return parseJson(r.text);
     };
@@ -255,26 +296,73 @@
   }
 
   /** Check the key, then save and activate it with the chosen free model. */
-  async function connect(rawKey, chosenModelId) {
+  async function connect(rawKey, chosenModelId, onStatus) {
     const key = cleanKey(rawKey);
     if (!/^sk-or-/.test(key)) throw fail("bad_key", "An OpenRouter key starts with “sk-or-”. Copy the whole key from openrouter.ai/keys.");
     await checkKey(key);
     const models = await freeModels();
     if (!models.length) throw new Error("OpenRouter isn't offering any free models right now. Try again later.");
-    const { main, vision, fallbacks } = plan(models, chosenModelId);
+    // Some free models only serve approved agent apps, and others are busy. Try each candidate
+    // with a tiny message and keep the first that actually answers.
+    const chosen = models.find((m) => m.id === chosenModelId);
+    const candidates = [...(chosen ? [chosen] : []), ...models.filter((m) => m !== chosen)].slice(0, 8);
+    const probeCfg = { key };
+    const bad = [];
+    let main = null;
+    let lastErr = null;
+    for (const m of candidates) {
+      if (onStatus) onStatus(`Trying ${m.name}…`);
+      try {
+        await streamOnce(probeCfg, m.id, "Reply with the single word OK.", {});
+        main = m;
+        break;
+      } catch (e) {
+        if (e.code === "bad_key") throw e;
+        lastErr = e;
+        bad.push(m.id);
+      }
+    }
+    if (!main) {
+      // Every candidate refused: fall back to the free router, which picks whatever free model is serving.
+      try {
+        await streamOnce(probeCfg, ROUTER, "Reply with the single word OK.", {});
+        main = { id: ROUTER, name: "OpenRouter's free router", context: 64000, vision: true };
+      } catch (e) {
+        throw lastErr || e;
+      }
+    }
+    const usable = models.filter((m) => !bad.includes(m.id));
+    const visionModels = usable.filter((m) => m.vision).sort((a, b) => visionRank(a) - visionRank(b) || rank(a) - rank(b));
+    const vision = main.vision ? main : visionModels[0];
     const cfg = {
+      v: CFG_VERSION,
       key,
       model: main.id,
       modelName: main.name,
-      visionModel: vision ? vision.id : null,
-      fallbacks: fallbacks.map((m) => m.id),
+      visionModel: vision ? vision.id : ROUTER,
+      fallbacks: usable.filter((m) => m !== main).slice(0, 3).map((m) => m.id),
+      bad,
+      names: { ...Object.fromEntries(models.map((m) => [m.id, m.name])), [ROUTER]: "OpenRouter's free router" },
+      caps: Object.fromEntries(models.map((m) => [m.id, { json: m.json, maxOut: m.maxOut }])),
       // Leave room for the reply: roughly 3 bytes of prompt text per token, capped at the app's usual size.
       maxBytes: Math.max(12000, Math.min(65536, Math.floor(main.context * 0.6 * 3))),
     };
+    cfg.note = chosen && chosen !== main ? `${chosen.name} isn't available to apps like this one, so Pip picked ${main.name}.` : "";
     save(cfg);
     activate(cfg);
     return cfg;
   }
 
-  PQ.openrouter = { load, save, freeModels, connect, activate, deactivate, cleanKey };
+  /** Saved setups from before model probing get re-checked once, quietly. */
+  function upgradeIfNeeded(cfg) {
+    if (!cfg || !cfg.key || cfg.v === CFG_VERSION) return;
+    connect(cfg.key, EXCLUDE.test(cfg.model) ? "" : cfg.model)
+      .then((fresh) => {
+        if (PQ.refreshBanner) PQ.refreshBanner();
+        PQ.toast(`Pip's brain is now ${fresh.modelName}.`);
+      })
+      .catch((e) => console.warn("Couldn't re-check the saved OpenRouter setup", e));
+  }
+
+  PQ.openrouter = { load, save, freeModels, connect, activate, deactivate, cleanKey, upgradeIfNeeded };
 })(window.PQ);
