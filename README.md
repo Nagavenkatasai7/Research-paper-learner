@@ -92,6 +92,13 @@ runtime. It checks that:
 * data lands under the viewer's private path,
 * the page never scrolls sideways at phone width.
 
+## Hosting outside claude.ai (Vercel)
+
+`node scripts/build-web.mjs` builds a standalone static site in `dist/`, and `vercel.json` points
+Vercel at that build. Outside claude.ai there is no `window.claude` runtime, so the site shows the
+full interface and stores your library in the browser, but **Pip can't think there**: stops that
+need Claude show a note instead. Use the claude.ai artifact for real study sessions.
+
 ## Publishing updates
 
 The artifact is published from `app/paper-quest.html`, with `app/js/*.js` as supporting files at
